@@ -1,7 +1,62 @@
 import streamlit as st
 import random
+import json
+import os
+import requests
 
-# Configuração da Página
+try:
+    import pypdf
+except ImportError:
+    pypdf = None
+
+try:
+    import google.generativeai as genai
+except ImportError:
+    genai = None
+
+SAVES_FILE = "save_game.json"
+PASTA_LIVROS = "livros"
+
+# ==============================================================================
+# CARREGAMENTO AUTOMÁTICO DOS LIVROS (PDFs e TXTs)
+# ==============================================================================
+@st.cache_resource
+def carregar_regras_dos_livros():
+    texto_total = ""
+    if os.path.exists(PASTA_LIVROS):
+        for arquivo in os.listdir(PASTA_LIVROS):
+            caminho = os.path.join(PASTA_LIVROS, arquivo)
+            try:
+                if arquivo.lower().endswith(".txt") or arquivo.lower().endswith(".md"):
+                    with open(caminho, "r", encoding="utf-8") as f:
+                        texto_total += f"\n--- FONTE: {arquivo} ---\n" + f.read()[:15000]
+                elif arquivo.lower().endswith(".pdf") and pypdf:
+                    leitor = pypdf.PdfReader(caminho)
+                    texto_pdf = ""
+                    for pag in leitor.pages[:20]:
+                        extraido = pag.extract_text()
+                        if extraido:
+                            texto_pdf += extraido + "\n"
+                    texto_total += f"\n--- FONTE: {arquivo} ---\n" + texto_pdf[:25000]
+            except Exception as e:
+                print(f"Erro ao ler {arquivo}: {e}")
+    return texto_total
+
+LORE_DOS_LIVROS = carregar_regras_dos_livros()
+
+def carregar_todos_saves():
+    if os.path.exists(SAVES_FILE):
+        try:
+            with open(SAVES_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def salvar_todos_saves(dados):
+    with open(SAVES_FILE, "w", encoding="utf-8") as f:
+        json.dump(dados, f, ensure_ascii=False, indent=2)
+
 st.set_page_config(
     page_title="Crônicas do Oculto: Sombras de SP",
     page_icon="🌘",
@@ -9,491 +64,490 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Estilização CSS: Visual Novel Dark Urbana
+# Estilização CSS: MMO Dark & Visual Novel & OOC
 st.markdown("""
     <style>
         .main { background-color: #0b0d11; color: #e6e6e6; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        .creation-card {
-            background: linear-gradient(135deg, #131722 0%, #1c152b 100%);
+        section[data-testid="stSidebar"] { background-color: #11141c; border-right: 1px solid #232936; }
+        
+        .mmo-card {
+            background: linear-gradient(145deg, #161b26 0%, #1c152b 100%);
             border: 1px solid #4a286c;
             border-radius: 12px;
-            padding: 25px;
-            margin-bottom: 25px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.7);
+            padding: 18px;
+            text-align: center;
+            box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+            transition: transform 0.2s;
+            margin-bottom: 18px;
         }
+        .mmo-card:hover { transform: translateY(-4px); border-color: #a855f7; }
+        .mmo-avatar { width: 100px; height: 100px; border-radius: 50%; border: 3px solid #8b5cf6; margin-bottom: 10px; object-fit: cover; }
+        
+        .mmo-slot-empty {
+            background-color: rgba(22, 27, 38, 0.4);
+            border: 2px dashed #4b5563;
+            border-radius: 12px;
+            padding: 40px 20px;
+            text-align: center;
+            margin-bottom: 18px;
+        }
+        .mmo-plus { font-size: 2.8em; color: #9ca3af; margin-bottom: 8px; }
+        
+        /* Visual Novel */
         .vn-box {
             background: linear-gradient(135deg, #131722 0%, #1a1528 100%);
             border: 1px solid #4a286c;
             border-left: 5px solid #9d50e6;
             border-radius: 10px;
             padding: 18px;
-            margin-bottom: 20px;
+            margin-bottom: 18px;
             box-shadow: 0 4px 15px rgba(0,0,0,0.6);
         }
-        .vn-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-        .vn-name { font-size: 1.25em; font-weight: bold; color: #d8b4fe; }
-        .vn-affinity { font-size: 0.85em; padding: 3px 8px; border-radius: 12px; font-weight: bold; }
-        .affinity-pos { background-color: #2e1065; color: #c084fc; border: 1px solid #a855f7; }
-        .affinity-neg { background-color: #450a0a; color: #f87171; border: 1px solid #ef4444; }
-        .affinity-neu { background-color: #1f2937; color: #9ca3af; border: 1px solid #4b5563; }
-        .vn-action { font-style: italic; color: #a1a1aa; margin-bottom: 8px; }
-        .vn-dialogue { font-size: 1.1em; color: #ffffff; line-height: 1.5; padding: 6px 0; }
-        .vn-prompt { color: #facc15; font-weight: bold; margin-top: 10px; text-transform: uppercase; font-size: 0.9em; letter-spacing: 1px; }
-        .stButton>button { width: 100%; border-radius: 6px; background-color: #3b1d5a; color: white; border: 1px solid #8b5cf6; font-weight: bold; height: 3em; }
-        .stButton>button:hover { background-color: #581c87; border-color: #c084fc; }
+        .vn-name { font-size: 1.2em; font-weight: bold; color: #d8b4fe; }
+        .vn-action { font-style: italic; color: #a1a1aa; margin: 8px 0; }
+        .vn-dialogue { font-size: 1.05em; color: #ffffff; line-height: 1.5; }
+        .vn-prompt { color: #facc15; font-weight: bold; margin-top: 12px; text-transform: uppercase; font-size: 0.88em; }
+        
+        /* Card OOC (Off-Game) */
+        .ooc-box {
+            background-color: #171324;
+            border: 1px dashed #c084fc;
+            border-left: 4px solid #a855f7;
+            border-radius: 8px;
+            padding: 14px 18px;
+            margin: 12px 0;
+            color: #e2e8f0;
+        }
+        
+        .roll-card {
+            background-color: #171d29;
+            border-left: 4px solid #60a5fa;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin: 12px 0;
+        }
+        .stButton>button { width: 100%; border-radius: 6px; background-color: #3b1d5a; color: white; border: 1px solid #8b5cf6; font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
 
-# 1. ESTADO GLOBAL
-if "personagem_pronto" not in st.session_state:
-    st.session_state.personagem_pronto = False
+HAB_FISICAS = ["Armas Brancas", "Armas de Fogo", "Atletismo", "Briga", "Condução", "Furtividade", "Ladronagem", "Ofícios", "Sobrevivência"]
+HAB_SOCIAIS = ["Empatia com Animais", "Empatia", "Etiqueta", "Intimidação", "Liderança", "Manha", "Performance", "Persuasão", "Subterfúgio"]
+HAB_MENTAIS = ["Ciência", "Erudição", "Finanças", "Investigação", "Medicina", "Ocultismo", "Percepção", "Política", "Tecnologia"]
+TODAS_HABILIDADES = HAB_FISICAS + HAB_SOCIAIS + HAB_MENTAIS
+TODOS_ATRIBUTOS = ["Força", "Destreza", "Vigor", "Carisma", "Manipulação", "Autocontrole", "Inteligência", "Raciocínio", "Determinação"]
 
-if "inventario" not in st.session_state:
-    st.session_state.inventario = [
-        {"nome": "Foco / Pertence Pessoal", "tipo": "Item Inicial", "detalhe": "Um objeto de valor pessoal que ancora sua humanidade ou poder.", "icone": "守"}
-    ]
+todos_saves = carregar_todos_saves()
 
-if "npcs" not in st.session_state:
-    st.session_state.npcs = {
-        "Helena Viana": {
-            "titulo": "Bibliotecária & Bruxa do Círculo da Hera",
-            "afeto": 15,
-            "personalidade": "Pragmática, metódica e desconfiada de novatos.",
-            "segredos": ["Guarda relíquias do século XVIII em um cofre no Bixiga."]
-        },
-        "Lucas Batista": {
-            "titulo": "Lobisomem Beta da Matilha dos Trilhos",
-            "afeto": 10,
-            "personalidade": "Protetor feroz, leal à família e motoboy na Zona Norte.",
-            "segredos": ["Está investigando caçadores com armas de prata perto da Cantareira."]
-        }
-    }
-
-if "dialogos" not in st.session_state:
-    st.session_state.dialogos = []
-
-# LISTA OFICIAL DAS 27 HABILIDADES
-HABILIDADES_FISICAS = ["Armas Brancas", "Armas de Fogo", "Atletismo", "Briga", "Condução", "Furtividade", "Ladronagem", "Ofícios", "Sobrevivência"]
-HABILIDADES_SOCIAIS = ["Empatia com Animais", "Empatia", "Etiqueta", "Intimidação", "Liderança", "Manha", "Performance", "Persuasão", "Subterfúgio"]
-HABILIDADES_MENTAIS = ["Ciência", "Erudição", "Finanças", "Investigação", "Medicina", "Ocultismo", "Percepção", "Política", "Tecnologia"]
+if "id_ativo" not in st.session_state:
+    st.session_state.id_ativo = None
+if "modo_criacao" not in st.session_state:
+    st.session_state.modo_criacao = False
 
 # ==============================================================================
-# TELA DE CRIAÇÃO COMPLETA DE PERSONAGEM
+# MOTOR DE GERAÇÃO DE IMAGEM COM GEMINI
 # ==============================================================================
-if not st.session_state.personagem_pronto:
-    st.title("Crônicas do Oculto: Sombras de São Paulo 🌘")
-    st.subheader("Criação de Personagem • Registro de Ficha")
-    
-    with st.container():
-        st.markdown('<div class="creation-card">', unsafe_allow_html=True)
-        
-        # 1. ESCOLHA DA ESPÉCIE
-        natureza = st.radio(
-            "O que você vai ser no submundo de São Paulo?",
-            ["Bruxo", "Lobisomem", "Vampiro"],
-            horizontal=True
+def gerar_imagem_com_gemini(prompt_descricao):
+    gemini_key = st.secrets.get("GEMINI_API_KEY", "")
+    if not gemini_key or not genai:
+        return None
+    try:
+        genai.configure(api_key=gemini_key)
+        model = genai.ImageGenerationModel("imagen-3.0-generate-002")
+        result = model.generate_images(
+            prompt=f"Dark fantasy, gothic urban, World of Darkness style, São Paulo night, gritty cinematic portrait, 8k: {prompt_descricao}",
+            number_of_images=1,
+            aspect_ratio="1:1"
         )
-        
-        tab_id, tab_hab, tab_poder, tab_traits = st.tabs([
-            "1. Identidade & História",
-            "2. Atributos & Habilidades (27)",
-            f"3. Poderes de {natureza}",
-            "4. Vantagens, Defeitos & Moralidade"
-        ])
-        
-        # TAB 1: IDENTIDADE & HISTÓRIA
-        with tab_id:
-            c1, c2 = st.columns(2)
-            with c1:
-                nome_p = st.text_input("Nome do Personagem:", value="Lucas Batista" if natureza=="Lobisomem" else "Victor Dornelles")
-                conceito = st.text_input("Conceito / Profissão Mortal:", value="Motoboy e Protetor Noturno" if natureza=="Lobisomem" else "Investigador Ocultista")
-                bairro = st.text_input("Bairro / Refúgio em SP:", value="Santana / Zona Norte" if natureza=="Lobisomem" else "Bixiga / Bela Vista")
-            with c2:
-                if natureza == "Lobisomem":
-                    matilha = st.text_input("Matilha / Posição:", "Matilha dos Trilhos • Posição: Beta")
-                    origem_lupina = st.selectbox("Raça de Origem:", ["Homídeo (Nascido Humano)", "Metis (Nascido Híbrido)", "Lupus (Nascido Lobo)"])
-                    auspicio = st.selectbox("Auspício Lunar:", ["Ahroun (Guerreiro / Lua Cheia)", "Galliard (Bardo / Lua Gibosa)", "Philodox (Juiz / Meia-Lua)", "Theurge (Xamã / Lua Crescente)", "Ragabash (Trapaceiro / Lua Nova)"])
-                    tradic_sub = f"{origem_lupina} • {auspicio}"
-                elif natureza == "Bruxo":
-                    tradic_sub = st.selectbox("Tradição Mágica:", ["Raízes Urbanas", "Círculo da Hera Antiga", "Filhos da Noite e do Sangue", "Ordem dos Elementos Livres", "Conclave dos Tecno-Arcanos"])
-                else:
-                    tradic_sub = st.selectbox("Clã Vampírico:", ["Ventrue", "Toreador", "Tremere", "Brujah", "Nosferatu", "Gangrel", "Malkaviano"])
-            
-            st.markdown("---")
-            st.markdown("**História, Origem e Primeira Transformação / Despertar:**")
-            historia = st.text_area(
-                "Descreva a trajetória da sua personagem, sua família, laços mortais e como ingressou na noite paulistana:",
-                value="Nascido na periferia da Zona Norte de São Paulo, descobriu sua natureza após um confronto violento. Hoje equilibra entregas noturnas com a proteção dos seus e o respeito ao segredo do Véu."
-            )
-
-        # TAB 2: ATRIBUTOS & 27 HABILIDADES
-        with tab_hab:
-            st.markdown("### 📊 Atributos Principais (1 a 5)")
-            col_f, col_s, col_m = st.columns(3)
-            with col_f:
-                st.markdown("**Físicos**")
-                forca = st.slider("Força:", 1, 5, 4 if natureza=="Lobisomem" else 2)
-                destreza = st.slider("Destreza:", 1, 5, 3)
-                vigor = st.slider("Vigor:", 1, 5, 3)
-            with col_s:
-                st.markdown("**Sociais**")
-                carisma = st.slider("Carisma:", 1, 5, 2)
-                manipulacao = st.slider("Manipulação:", 1, 5, 1 if natureza=="Lobisomem" else 3)
-                autocontrole = st.slider("Autocontrole:", 1, 5, 2)
-            with col_m:
-                st.markdown("**Mentais**")
-                inteligencia = st.slider("Inteligência:", 1, 5, 2 if natureza=="Lobisomem" else 4)
-                raciocinio = st.slider("Raciocínio:", 1, 5, 3)
-                determinacao = st.slider("Determinação:", 1, 5, 2 if natureza=="Lobisomem" else 3)
-
-            st.markdown("---")
-            st.markdown("### 🎯 As 27 Habilidades Padronizadas (0 a 5)")
-            habilidades_dict = {}
-            col_hf, col_hs, col_hm = st.columns(3)
-            
-            with col_hf:
-                st.markdown("**Físicas**")
-                for h in HABILIDADES_FISICAS:
-                    default_val = 3 if h in ["Briga", "Atletismo", "Sobrevivência"] and natureza=="Lobisomem" else 0
-                    habilidades_dict[h] = st.number_input(f"{h}:", min_value=0, max_value=5, value=default_val, key=f"hab_{h}")
-            with col_hs:
-                st.markdown("**Sociais**")
-                for h in HABILIDADES_SOCIAIS:
-                    default_val = 2 if h == "Intimidação" and natureza=="Lobisomem" else 0
-                    habilidades_dict[h] = st.number_input(f"{h}:", min_value=0, max_value=5, value=default_val, key=f"hab_{h}")
-            with col_hm:
-                st.markdown("**Mentais**")
-                for h in HABILIDADES_MENTAIS:
-                    default_val = 2 if h in ["Percepção", "Ocultismo"] and natureza=="Lobisomem" else 0
-                    habilidades_dict[h] = st.number_input(f"{h}:", min_value=0, max_value=5, value=default_val, key=f"hab_{h}")
-
-        # TAB 3: PODERES ESPECÍFICOS DA ESPÉCIE
-        with tab_poder:
-            especificos = {}
-            if natureza == "Lobisomem":
-                st.markdown("#### 🐺 Regras dos Lobisomens (Alfa 0.9)")
-                st.markdown("Dons Livres (5 pontos iniciais distribuidos por Grau I=1, II=2, III=3, IV=4, V=5):")
-                dons_iniciais = st.text_area(
-                    "Dons e Rituais Aprendidos (Ex: Cura Feral III, Predador Ágil II):",
-                    value="Cura Feral (Regeneração e Vigor - Grau III, 1 ou 2 checagens)\nPredador Ágil (Velocidade Feral - Grau II, passivo +5m / reação 1 checagem)"
-                )
-                c_ren1, c_ren2 = st.columns(2)
-                with c_ren1:
-                    renome_pilares = st.selectbox("Pilar de Renome Inicial (Começa com 1):", ["Glória", "Honra", "Sabedoria", "Astúcia", "Pureza"])
-                    forma_padrao = st.selectbox("Forma de Início:", ["Humana (10m)", "Lupina (15m, +1 Faro)", "Híbrida (10m, Garras +2 e Força +1)"])
-                with c_ren2:
-                    bloqueio_prata = st.checkbox("Bloqueio por Prata Ativo?", value=False)
-                
-                especificos = {
-                    "furia": 1,
-                    "forma": forma_padrao,
-                    "dons": dons_iniciais,
-                    "renome": {renome_pilares: 1},
-                    "bloqueio_prata": bloqueio_prata
-                }
-            elif natureza == "Bruxo":
-                st.markdown("#### 🔮 Sistema de Magia Livre e Grimório (Alfa 0.25)")
-                c1, c2, c3 = st.columns(3)
-                with c1:
-                    d_vitalidade = st.slider("Vitalidade:", 0, 5, 3)
-                    d_caminhos = st.slider("Caminhos:", 0, 5, 2)
-                    d_elementos = st.slider("Elementos:", 0, 5, 0)
-                with c2:
-                    d_psique = st.slider("Psique:", 0, 5, 0)
-                    d_essencia = st.slider("Essência:", 0, 5, 0)
-                    d_alquimia = st.slider("Alquimia:", 0, 5, 0)
-                with c3:
-                    d_alem = st.slider("Além:", 0, 5, 0)
-                    d_destino = st.slider("Destino:", 0, 5, 0)
-                    d_eras = st.slider("Eras:", 0, 5, 0)
-                
-                especificos = {
-                    "potencia": 1,
-                    "folego_max": 26,
-                    "folego_atual": 26,
-                    "sobrecarga": 0,
-                    "dominios": {
-                        "Vitalidade": d_vitalidade, "Caminhos": d_caminhos, "Elementos": d_elementos,
-                        "Psique": d_psique, "Essência": d_essencia, "Alquimia": d_alquimia,
-                        "Além": d_alem, "Destino": d_destino, "Eras": d_eras
-                    }
-                }
-            else: # Vampiro
-                st.markdown("#### 🩸 Condição Vampírica")
-                fome = st.slider("Fome Inicial:", 0, 5, 1)
-                pot_sangue = st.slider("Potência do Sangue:", 1, 5, 1)
-                disc = st.text_area("Disciplinas:", value="Potência 2, Fortitude 1")
-                especificos = {
-                    "fome": fome,
-                    "potencia_sangue": pot_sangue,
-                    "disciplinas": disc
-                }
-
-        # TAB 4: VANTAGENS, DEFEITOS & MORALIDADE
-        with tab_traits:
-            st.markdown("### ⚖️ Moralidade, Convicções e Pilares Humanos")
-            c_conv1, c_conv2 = st.columns(2)
-            with c_conv1:
-                conv1 = st.text_input("Convicção 1:", "Não abandonar quem depende de mim")
-                conv2 = st.text_input("Convicção 2:", "Reparar o dano causado aos inocentes")
-            with c_conv2:
-                pilar1 = st.text_input("Pilar 1 (Pessoa Mortal):", "Minha irmã mais nova")
-                pilar2 = st.text_input("Pilar 2 (Pessoa Mortal):", "Amigo de infância")
-
-            st.markdown("---")
-            st.markdown("### 🎁 Vantagens (7 pontos) e ⚠️ Defeitos (2 pontos)")
-            c_v, c_d = st.columns(2)
-            with c_v:
-                vantagens_txt = st.text_area("Vantagens & Antecedentes (7 pts):", value="Recursos 2 (Moto e vida estável)\nRefúgio 1 (Quarto seguro na ZN)\nAliados 2 (Mecânico parceiro)\nSono Leve 1\nContatos 1")
-            with c_d:
-                defeitos_txt = st.text_area("Defeitos (Mínimo 2 pts):", value="Segredo Perigoso 1 (Identidade lupina sob suspeita)\nTimidez 1")
-
-        # BOTÃO SALVAR PERSONAGEM
-        st.markdown("---")
-        if st.button("💾 Salvar Ficha Completa e Iniciar Campanha"):
-            st.session_state.personagem = {
-                "nome": nome_p,
-                "natureza": natureza,
-                "conceito": conceito,
-                "tradic": tradic_sub,
-                "bairro": bairro,
-                "historia": historia,
-                "atributos": {
-                    "Força": forca, "Destreza": destreza, "Vigor": vigor,
-                    "Carisma": carisma, "Manipulação": manipulacao, "Autocontrole": autocontrole,
-                    "Inteligência": inteligencia, "Raciocínio": raciocinio, "Determinação": determinacao
-                },
-                "habilidades": habilidades_dict,
-                "vitalidade_max": vigor + 3,
-                "dano_superficial": 0,
-                "dano_agravado": 0,
-                "vontade_max": autocontrole + determinacao,
-                "vontade_superficial": 0,
-                "humanidade": 7,
-                "conviccoes": [(conv1, pilar1), (conv2, pilar2)],
-                "vantagens": vantagens_txt,
-                "defeitos": defeitos_txt,
-                "especificos": especificos
-            }
-            
-            # PRIMEIRA CENA TEMÁTICA
-            st.session_state.dialogos = [{
-                "npc": "Narrador",
-                "afeto": 0,
-                "acao": f"A chuva escorre pelas telhas de {bairro}. Como um {natureza} em São Paulo, seus sentidos percebem a cidade despertar para mais uma noite violenta.",
-                "fala": f"Suas garras e instintos estão em alerta, {nome_p}. Um odor estranho de sangue e pólvora foi farejado próximo ao galpão onde sua matilha ou aliados se reúnem.",
-                "pergunta": "O que você faz?",
-                "item_descoberto": None
-            }]
-            st.session_state.personagem_pronto = True
-            st.rerun()
-
-        st.markdown('</div>', unsafe_allow_html=True)
+        for img in result.images:
+            return img._pil_image
+    except Exception as e:
+        print(f"Erro ao gerar imagem no Gemini: {e}")
+        return None
 
 # ==============================================================================
-# TELA DO JOGO (VISUAL NOVEL + ABAS DE JOGO)
+# MOTOR VENICE AI (SUPORTE A IN-GAME E OFF-GAME OOC)
 # ==============================================================================
-else:
-    p = st.session_state.personagem
+def narrar_acao_venice(comando_jogador, personagem, historico_recente):
+    venice_key = st.secrets.get("VENICE_API_KEY", "")
+    venice_url = st.secrets.get("VENICE_BASE_URL", "https://api.venice.ai/api/v1")
     
-    # BARRA LATERAL DINÂMICA
-    with st.sidebar:
-        st.title("👤 Ficha Ativa")
-        st.subheader(p["nome"])
-        st.caption(f"{p['natureza']} • {p['tradic']} • {p['bairro']}")
-        
-        if st.button("🔄 Editar Ficha / Criar Outro"):
-            st.session_state.personagem_pronto = False
-            st.rerun()
+    if not venice_key:
+        return {
+            "tipo": "narrativa",
+            "npc": "Mestre do Oculto",
+            "acao": "Observa a garoa de São Paulo esperando a chave da Venice AI.",
+            "fala": "A chave da Venice AI não foi configurada nos Secrets (.streamlit/secrets.toml). Configure-a para que a IA narre sua aventura!",
+            "pergunta": "O que você faz?"
+        }
 
-        st.markdown("---")
-        st.markdown("### 🩸 Trilha de Vitalidade")
-        feridos = p['dano_superficial'] + p['dano_agravado']
-        st.write(f"Dano: {p['dano_superficial']} Superficial | {p['dano_agravado']} Agravado")
-        st.progress(max(0.0, min(1.0, (p['vitalidade_max'] - feridos) / p['vitalidade_max'])))
-        st.write(f"**Força de Vontade:** {p['vontade_max'] - p['vontade_superficial']} / {p['vontade_max']}")
+    # Verifica se o jogador está falando em OFF-GAME (OOC:)
+    eh_ooc = comando_jogador.strip().lower().startswith("ooc:") or comando_jogador.strip().lower().startswith("[ooc]")
 
-        # RECURSOS EXCLUSIVOS DE CADA ESPÉCIE
-        st.markdown("---")
-        esp = p["especificos"]
-        if p["natureza"] == "Lobisomem":
-            st.markdown("### 🐺 Condição Lupina (Alfa 0.9)")
-            
-            # Formas Naturais
-            forma_sel = st.selectbox("Forma Atual:", ["Humana (10m)", "Lupina (15m, +1 Faro)", "Híbrida (10m, Garras +2)"], index=0)
-            esp["forma"] = forma_sel
-            
-            # Fúria Feral
-            st.write(f"**Fúria Atual:** {esp['furia']} / 5")
-            st.progress(esp['furia'] / 5.0)
-            
-            # Checagem de Fúria (Regra 16.1)
-            if st.button("⚡ Checagem de Fúria (1d10)"):
-                d_furia = random.randint(1, 10)
-                if d_furia <= 5:
-                    if esp['furia'] < 5:
-                        esp['furia'] += 1
-                        st.warning(f"Dado {d_furia}: A Fúria subiu para {esp['furia']}!")
-                    else:
-                        st.error(f"Dado {d_furia}: Fúria já em 5! Teste Autocontrole + Determinação contra Frenesi!")
-                else:
-                    st.success(f"Dado {d_furia}: A fera permaneceu sob controle.")
-            
-            # Prata
-            esp["bloqueio_prata"] = st.checkbox("⚠️ Bloqueio por Prata Ativo?", value=esp.get("bloqueio_prata", False))
+    if eh_ooc:
+        # Prompt exclusivo para responder dúvidas e regras
+        prompt_sistema = f"""
+Você é o Mestre/Narrador do RPG 'Crônicas do Oculto: Sombras de São Paulo'.
+O jogador está falando FORA DO PERSONAGEM (Out of Character / OOC) para tirar dúvidas de regras, pedir informações sobre o que o personagem dele saberia, ou pedir esclarecimentos da cena.
 
-        elif p["natureza"] == "Bruxo":
-            st.markdown("### ⚡ Fôlego & Sobrecarga (Alfa 0.25)")
-            st.write(f"**Fôlego Mágico:** {esp['folego_atual']} / {esp['folego_max']}")
-            st.progress(max(0.0, min(1.0, esp['folego_atual'] / esp['folego_max'])))
-            st.write(f"**Sobrecarga:** {esp['sobrecarga']}")
-            excesso = max(0, esp['sobrecarga'] - esp['potencia'])
-            if excesso > 0:
-                st.error(f"⚠️ Sobrecarga Ativa: {excesso}")
-        else: # Vampiro
-            st.markdown("### 🩸 Condição Vampírica")
-            st.write(f"**Fome:** {esp['fome']} / 5")
-            st.progress(esp['fome'] / 5.0)
+REGRAS E LORE DOS LIVROS NA PASTA 'LIVROS':
+{LORE_DOS_LIVROS[:9000]}
 
-        # ROLADOR DE DADOS D10
-        st.markdown("---")
-        st.markdown("### 🎲 Rolador de Dados (d10)")
-        qtd_dados = st.number_input("Qtd de dados da parada:", min_value=1, max_value=15, value=5)
-        
-        # Se for Lobisomem, calcula quantos dados são de Fúria
-        qtd_furia = min(esp["furia"], qtd_dados) if p["natureza"] == "Lobisomem" else 0
-        
-        if st.button("🎲 Rolar Dados"):
-            dados = [random.randint(1, 10) for _ in range(qtd_dados)]
-            dez = dados.count(10)
-            pares_10 = dez // 2
-            dez_avulsos = dez % 2
-            sucessos = sum(1 for d in dados if 6 <= d <= 9) + (pares_10 * 4) + dez_avulsos
-            
-            st.write(f"**Resultados:** {dados}")
-            if qtd_furia > 0:
-                st.caption(f"*(Inclui {qtd_furia} Dado(s) de Fúria)*")
-            if pares_10 > 0:
-                st.success(f"✨ **CRÍTICO!** Sucessos Totais: {sucessos} (com {pares_10} par(es) de 10)")
-            else:
-                st.info(f"**Sucessos Totais:** {sucessos}")
+DADOS DO PERSONAGEM:
+- Nome: {personagem['nome']} ({personagem['natureza']})
+- Conceito: {personagem['conceito']}
+- Atributos e Habilidades: {personagem['atributos']} | {personagem['habilidades']}
 
-    # ABAS PRINCIPAIS DO JOGO
+INSTRUÇÕES PARA RESPOSTA OOC:
+1. Responda ESTRITAMENTE em formato JSON com 2 chaves:
+   "tipo": "ooc"
+   "fala": "Sua resposta direta, cordial e explicativa como Mestre, esclarecendo as regras do livro, o que os sentidos dele percebem ou sugerindo qual teste ele pode fazer."
+2. Seja claro, prestativo e imparcial como um bom Mestre de mesa de RPG.
+"""
+    else:
+        # Prompt normal de narrativa dramática
+        prompt_sistema = f"""
+Você é o Mestre do RPG 'Crônicas do Oculto: Sombras de São Paulo'.
+Ambiente: Fantasia urbana sombria em São Paulo, dark romance, perigo noturno, vampiros, lobisomens, bruxaria e o Véu.
+
+CONHECIMENTO DOS LIVROS DE REGRAS (PASTA LIVROS):
+{LORE_DOS_LIVROS[:9000]}
+
+PROTAGONISTA:
+- Nome: {personagem['nome']} ({personagem['natureza']})
+- Linhagem/Tradição: {personagem['tradic']}
+- Bairro: {personagem['bairro']}
+- Conceito: {personagem['conceito']}
+- História: {personagem['historia']}
+
+INSTRUÇÕES OBRIGATÓRIAS:
+1. Responda ESTRITAMENTE em formato JSON com 4 chaves:
+   "tipo": "narrativa",
+   "npc": Nome do personagem falando (ou 'Narrador'),
+   "acao": Descrição atmosférica da cena ou ação do NPC (estilo dark romance / mistério urbano),
+   "fala": Diálogo do NPC ou a consequência direta do que aconteceu,
+   "pergunta": Sempre termine com "O QUE VOCÊ FAZ?"
+2. Jamais tome decisões pelo jogador. Respeite as regras dos livros da pasta 'livros'.
+"""
+
+    try:
+        headers = {"Authorization": f"Bearer {venice_key}", "Content-Type": "application/json"}
+        payload = {
+            "model": "llama-3.3-70b",
+            "messages": [
+                {"role": "system", "content": prompt_sistema},
+                {"role": "user", "content": f"{comando_jogador}"}
+            ],
+            "response_format": {"type": "json_object"}
+        }
+        r = requests.post(f"{venice_url}/chat/completions", headers=headers, json=payload, timeout=25)
+        res_data = r.json()
+        conteudo = json.loads(res_data["choices"][0]["message"]["content"])
+        if eh_ooc:
+            conteudo["tipo"] = "ooc"
+            conteudo["pergunta_jogador"] = comando_jogador
+        else:
+            conteudo["tipo"] = "narrativa"
+        return conteudo
+    except Exception as e:
+        return {
+            "tipo": "narrativa",
+            "npc": "Mestre (Aviso)",
+            "acao": "As sombras da metrópole tremeluzem.",
+            "fala": f"Erro de conexão com o narrador: {str(e)}",
+            "pergunta": "O que você faz?"
+        }
+
+# ==============================================================================
+# TELA 1: SELEÇÃO DE PERSONAGENS (ESTILO MMO)
+# ==============================================================================
+if st.session_state.id_ativo is None and not st.session_state.modo_criacao:
     st.title("Crônicas do Oculto 🌘")
-    st.caption(f"{p['nome']} • {p['natureza']} • Sombras de São Paulo")
+    st.subheader("Seleção de Personagens • Sombras de São Paulo")
+    
+    if LORE_DOS_LIVROS:
+        st.success(f"📚 Livros de regras carregados da pasta '{PASTA_LIVROS}' com sucesso!")
 
-    aba_vn, aba_ficha_comp, aba_inv, aba_npcs, aba_diario = st.tabs([
-        "📜 Aventura (Visual Novel)",
-        "📋 Ficha Completa",
-        "🎒 Inventário & Pistas", 
-        "👥 Códex de NPCs", 
-        "📖 Diário de Quests"
-    ])
-
-    # 1. ABA VISUAL NOVEL
-    with aba_vn:
-        for d in st.session_state.dialogos:
-            afeto = d["afeto"]
-            badge_class = "affinity-pos" if afeto > 20 else ("affinity-neg" if afeto < -20 else "affinity-neu")
-            status_txt = f"Afeição: +{afeto}" if afeto > 0 else (f"Afeição: {afeto}" if afeto < 0 else "Neutro")
-
+    cols = st.columns(3)
+    slots = list(todos_saves.items())
+    
+    for idx, (char_id, dados_save) in enumerate(slots):
+        p = dados_save["personagem"]
+        with cols[idx % 3]:
+            icone_esp = "🐺" if p['natureza'] == "Lobisomem" else ("🔮" if p['natureza'] == "Bruxo" else "🩸")
+            avatar_url = p.get("avatar") or f"https://api.dicebear.com/7.x/bottts/svg?seed={p['nome']}"
+            
             st.markdown(f"""
-                <div class="vn-box">
-                    <div class="vn-header">
-                        <span class="vn-name">🎭 {d['npc']}</span>
-                        <span class="vn-affinity {badge_class}">{status_txt}</span>
-                    </div>
-                    <div class="vn-action">"{d['acao']}"</div>
-                    <div class="vn-dialogue">"{d['fala']}"</div>
-                    <div class="vn-prompt">👉 {d['pergunta']}</div>
+                <div class="mmo-card">
+                    <img src="{avatar_url}" class="mmo-avatar"><br>
+                    <strong style="font-size: 1.3em; color: #f3e8ff;">{p['nome']}</strong><br>
+                    <span style="color: #c084fc; font-weight: bold;">{icone_esp} {p['natureza']}</span> • <small style="color: #94a3b8;">{p['bairro']}</small>
+                    <p style="color: #9ca3af; font-size: 0.85em; margin-top: 6px;"><em>{p['conceito']}</em></p>
                 </div>
             """, unsafe_allow_html=True)
             
-            if d.get("item_descoberto"):
-                it = d["item_descoberto"]
-                st.info(f"🔍 **Nova Pista Encontrada:** {it['nome']} ({it['tipo']}) - Adicionado ao seu Inventário!")
+            col_b1, col_b2 = st.columns([3, 1])
+            with col_b1:
+                if st.button(f"▶️ Jogar", key=f"play_{char_id}"):
+                    st.session_state.id_ativo = char_id
+                    st.rerun()
+            with col_b2:
+                if st.button("🗑️", key=f"del_{char_id}", help="Excluir"):
+                    del todos_saves[char_id]
+                    salvar_todos_saves(todos_saves)
+                    st.rerun()
 
-        comando = st.chat_input("O que você faz ou diz agora?...")
-        if comando:
-            novo_item = None
-            if any(w in comando.lower() for w in ["investigar", "farejar", "rastrear", "procurar", "olhar"]):
-                novo_item = {
-                    "nome": "Cápsula de Prata Vazia",
-                    "tipo": "Evidência / Balística",
-                    "detalhe": "Um cartucho deflagrado de pistola com revestimento de prata legítima gravada com runas.",
-                    "icone": "🪙"
-                }
-                st.session_state.inventario.append(novo_item)
-
-            st.session_state.dialogos.append({
-                "npc": "Lucas Batista" if p["natureza"] != "Lobisomem" else "Helena Viana",
-                "afeto": 15,
-                "acao": f"Observa atentamente sua reação diante da cena ('{comando}').",
-                "fala": f"Você tem instintos afiados, {p['nome']}. Mas o sangue derramado aqui ainda está quente... Fique em guarda.",
-                "pergunta": "O que você faz agora?",
-                "item_descoberto": novo_item
-            })
+    proximo_slot = len(slots) % 3
+    with cols[proximo_slot]:
+        st.markdown("""
+            <div class="mmo-slot-empty">
+                <div class="mmo-plus">➕</div>
+                <strong style="color: #e2e8f0; font-size: 1.1em;">Criar Personagem</strong><br>
+                <small style="color: #94a3b8;">Bruxo, Lobisomem ou Vampiro</small>
+            </div>
+        """, unsafe_allow_html=True)
+        if st.button("Novo Slot", key="btn_novo_slot"):
+            st.session_state.modo_criacao = True
             st.rerun()
 
-    # 2. ABA FICHA COMPLETA
-    with aba_ficha_comp:
-        st.subheader("📋 Registro Completo do Personagem")
-        col_c1, col_c2 = st.columns(2)
-        with col_c1:
-            st.markdown(f"**Conceito:** {p['conceito']}")
-            st.markdown(f"**História & Origem:** {p['historia']}")
-            st.markdown(f"**Vantagens:**\n{p['vantagens']}")
-            st.markdown(f"**Defeitos:**\n{p['defeitos']}")
-        with col_c2:
-            st.markdown("**Convicções e Pilares Humanos:**")
-            for c, pil in p['conviccoes']:
-                st.markdown(f"- *{c}* (Pilar: **{pil}**)")
-            
-            st.markdown("---")
-            if p["natureza"] == "Lobisomem":
-                st.markdown(f"**Dons & Rituais:**\n{p['especificos']['dons']}")
-            elif p["natureza"] == "Bruxo":
-                st.markdown(f"**Domínios Conhecidos:** {p['especificos']['dominios']}")
-            else:
-                st.markdown(f"**Disciplinas:** {p['especificos']['disciplinas']}")
+# ==============================================================================
+# TELA 2: CRIAÇÃO DE PERSONAGEM
+# ==============================================================================
+elif st.session_state.modo_criacao:
+    st.title("Novo Personagem 🌘")
+    if st.button("⬅️ Voltar ao Menu de Seleção"):
+        st.session_state.modo_criacao = False
+        st.rerun()
 
-    # 3. ABA INVENTÁRIO
-    with aba_inv:
-        st.subheader("🎒 Inventário & Pistas Encontradas")
-        cols = st.columns(3)
-        for i, it in enumerate(st.session_state.inventario):
-            with cols[i % 3]:
+    natureza = st.radio("O que você vai ser?", ["Bruxo", "Lobisomem", "Vampiro"], horizontal=True)
+    
+    tab_id, tab_hab, tab_poder, tab_traits = st.tabs(["Identidade & Retrato", "Atributos & Habilidades", f"Poderes de {natureza}", "Moralidade & Vantagens"])
+    
+    with tab_id:
+        c1, c2 = st.columns([2, 1])
+        with c1:
+            nome_p = st.text_input("Nome do Personagem:", value="Lucas Batista" if natureza=="Lobisomem" else "Victor Dornelles")
+            conceito = st.text_input("Conceito / Profissão Mortal:", value="Motoboy e Protetor Noturno" if natureza=="Lobisomem" else "Investigador Ocultista")
+            bairro = st.text_input("Bairro / Refúgio em SP:", value="Santana / ZN" if natureza=="Lobisomem" else "Bixiga / Bela Vista")
+            if natureza == "Lobisomem":
+                origem_lupina = st.selectbox("Raça de Origem:", ["Homídeo", "Metis", "Lupus"])
+                auspicio = st.selectbox("Auspício:", ["Ahroun", "Galliard", "Philodox", "Theurge", "Ragabash"])
+                tradic_sub = f"{origem_lupina} • {auspicio}"
+            elif natureza == "Bruxo":
+                tradic_sub = st.selectbox("Tradição Mágica:", ["Raízes Urbanas", "Círculo da Hera Antiga", "Filhos da Noite e do Sangue", "Ordem dos Elementos Livres", "Conclave dos Tecno-Arcanos"])
+            else:
+                tradic_sub = st.selectbox("Clã Vampírico:", ["Ventrue", "Toreador", "Tremere", "Brujah", "Nosferatu", "Gangrel", "Malkaviano"])
+        
+        with c2:
+            st.markdown("**Retrato Canônico**")
+            if st.button("🎨 Gerar com Gemini"):
+                with st.spinner("Pintando..."):
+                    desc = f"{natureza} chamado {nome_p}, {conceito}, habitante de {bairro} em SP."
+                    img_gemini = gerar_imagem_com_gemini(desc)
+                    if img_gemini:
+                        st.session_state.avatar_gerado_temp = img_gemini
+                        st.image(img_gemini)
+            avatar_final = f"https://api.dicebear.com/7.x/bottts/svg?seed={nome_p}"
+        
+        historia = st.text_area("História e Origem:", value="Cresceu em São Paulo e descobriu o sobrenatural nas ruas da metrópole.")
+
+    with tab_hab:
+        st.markdown("### Atributos (1 a 5)")
+        col_f, col_s, col_m = st.columns(3)
+        with col_f:
+            forca = st.slider("Força:", 1, 5, 4 if natureza=="Lobisomem" else 2)
+            destreza = st.slider("Destreza:", 1, 5, 3)
+            vigor = st.slider("Vigor:", 1, 5, 3)
+        with col_s:
+            carisma = st.slider("Carisma:", 1, 5, 2)
+            manipulacao = st.slider("Manipulação:", 1, 5, 1 if natureza=="Lobisomem" else 3)
+            autocontrole = st.slider("Autocontrole:", 1, 5, 2)
+        with col_m:
+            inteligencia = st.slider("Inteligência:", 1, 5, 2 if natureza=="Lobisomem" else 4)
+            raciocinio = st.slider("Raciocínio:", 1, 5, 3)
+            determinacao = st.slider("Determinação:", 1, 5, 2 if natureza=="Lobisomem" else 3)
+        
+        st.markdown("### Habilidades Principais")
+        hab_dict = {}
+        ch1, ch2, ch3 = st.columns(3)
+        with ch1:
+            for h in HAB_FISICAS:
+                hab_dict[h] = st.number_input(f"{h}:", 0, 5, 3 if h in ["Briga", "Atletismo"] and natureza=="Lobisomem" else 0, key=f"cr_{h}")
+        with ch2:
+            for h in HAB_SOCIAIS:
+                hab_dict[h] = st.number_input(f"{h}:", 0, 5, 2 if h == "Intimidação" and natureza=="Lobisomem" else 0, key=f"cr_{h}")
+        with ch3:
+            for h in HAB_MENTAIS:
+                hab_dict[h] = st.number_input(f"{h}:", 0, 5, 2 if h in ["Percepção", "Ocultismo"] and natureza=="Lobisomem" else 0, key=f"cr_{h}")
+
+    with tab_poder:
+        especificos = {}
+        if natureza == "Lobisomem":
+            dons = st.text_area("Dons Iniciais (Alfa 0.9):", "Cura Feral III\nPredador Ágil II")
+            especificos = {"furia": 1, "forma": "Humana (10m)", "dons": dons, "bloqueio_prata": False}
+        elif natureza == "Bruxo":
+            d_vit = st.slider("Vitalidade:", 0, 5, 3)
+            d_cam = st.slider("Caminhos:", 0, 5, 2)
+            especificos = {"potencia": 1, "folego_max": 26, "folego_atual": 26, "sobrecarga": 0, "dominios": {"Vitalidade": d_vit, "Caminhos": d_cam}}
+        else:
+            fome = st.slider("Fome:", 0, 5, 1)
+            disc = st.text_input("Disciplinas:", "Potência 2, Fortitude 1")
+            especificos = {"fome": fome, "disciplinas": disc}
+
+    with tab_traits:
+        conv1 = st.text_input("Convicção:", "Proteger aqueles que dependem de mim")
+        pilar1 = st.text_input("Pilar Mortal:", "Irmã / Amigo de infância")
+        vantagens_txt = st.text_area("Vantagens (7 pts):", "Recursos 2\nRefúgio 1\nAliados 2\nSono Leve 1\nContatos 1")
+        defeitos_txt = st.text_area("Defeitos (2 pts):", "Segredo Perigoso 1\nTimidez 1")
+
+    if st.button("💾 Salvar Personagem e Ir para a Campanha"):
+        novo_id = f"char_{len(todos_saves) + 1}_{nome_p.lower().replace(' ', '_')}"
+        dados_novo = {
+            "personagem": {
+                "nome": nome_p, "natureza": natureza, "conceito": conceito, "tradic": tradic_sub, "bairro": bairro, "historia": historia,
+                "avatar": avatar_final,
+                "atributos": {"Força": forca, "Destreza": destreza, "Vigor": vigor, "Carisma": carisma, "Manipulação": manipulacao, "Autocontrole": autocontrole, "Inteligência": inteligencia, "Raciocínio": raciocinio, "Determinação": determinacao},
+                "habilidades": hab_dict, "vitalidade_max": vigor + 3, "dano_superficial": 0, "dano_agravado": 0, "vontade_max": autocontrole + determinacao, "vontade_superficial": 0,
+                "humanidade": 7, "conviccoes": [(conv1, pilar1)], "vantagens": vantagens_txt, "defeitos": defeitos_txt, "especificos": especificos
+            },
+            "dialogos": [{
+                "tipo": "narrativa", "npc": "Narrador",
+                "acao": f"A noite cai úmida sobre {bairro}. Como um {natureza} ({conceito}), seus instintos percebem a cidade pulsar.",
+                "fala": f"Bem-vindo à noite paulistana, {nome_p}. Um mistério recente colocou seus aliados em alerta contra violações do Véu.",
+                "pergunta": "O que você faz?", "item_descoberto": None
+            }],
+            "inventario": [{"nome": "Pertence Pessoal", "tipo": "Item Inicial", "detalhe": "Um foco ou amuleto pessoal.", "icone": "💼"}],
+            "npcs": {
+                "Helena Viana": {"titulo": "Bibliotecária do Círculo da Hera", "afeto": 15, "personalidade": "Pragmática e reservada.", "segredos": ["Contatos com a corte da Bela Vista."]},
+                "Lucas Batista": {"titulo": "Beta dos Trilhos", "afeto": 10, "personalidade": "Protetor territorial.", "segredos": ["Investiga caçadores de prata."]}
+            }
+        }
+        todos_saves[novo_id] = dados_novo
+        salvar_todos_saves(todos_saves)
+        st.session_state.modo_criacao = False
+        st.session_state.id_ativo = novo_id
+        st.rerun()
+
+# ==============================================================================
+# TELA 3: EM JOGO (TELA DA CAMPANHA)
+# ==============================================================================
+else:
+    char_id = st.session_state.id_ativo
+    dados_jogo = todos_saves[char_id]
+    p = dados_jogo["personagem"]
+    esp = p["especificos"]
+
+    # BARRA LATERAL
+    with st.sidebar:
+        st.subheader(f"🌘 {p['nome']}")
+        st.caption(f"{p['natureza']} • {p['tradic']} • {p['bairro']}")
+        
+        if st.button("🚪 Menu de Personagens"):
+            salvar_todos_saves(todos_saves)
+            st.session_state.id_ativo = None
+            st.rerun()
+
+        st.markdown("---")
+        feridos = p['dano_superficial'] + p['dano_agravado']
+        st.write(f"**Vitalidade:** {p['vitalidade_max'] - feridos}/{p['vitalidade_max']}")
+        st.progress(max(0.0, min(1.0, (p['vitalidade_max'] - feridos) / p['vitalidade_max'])))
+        st.write(f"**Vontade:** {p['vontade_max'] - p['vontade_superficial']}/{p['vontade_max']}")
+
+        if p["natureza"] == "Lobisomem":
+            st.markdown("##### 🐺 Fúria")
+            esp["forma"] = st.selectbox("Forma:", ["Humana (10m)", "Lupina (15m)", "Híbrida (10m, Garras +2)"], index=0)
+            st.write(f"**Fúria:** {esp['furia']}/5")
+            st.progress(esp['furia'] / 5.0)
+            if st.button("⚡ Checar Fúria"):
+                df = random.randint(1, 10)
+                if df <= 5 and esp['furia'] < 5:
+                    esp['furia'] += 1
+                    st.warning(f"Dado {df}: Fúria aumentou para {esp['furia']}!")
+                else:
+                    st.success(f"Dado {df}: Fúria estável.")
+                salvar_todos_saves(todos_saves)
+        elif p["natureza"] == "Bruxo":
+            st.markdown("##### ⚡ Fôlego")
+            st.write(f"**Fôlego:** {esp['folego_atual']}/{esp['folego_max']}")
+            st.progress(max(0.0, min(1.0, esp['folego_atual'] / esp['folego_max'])))
+
+    # ÁREA DA CAMPANHA
+    aba_av, aba_inv, aba_cod, aba_fic = st.tabs(["📜 Aventura", "🎒 Inventário", "👥 Códex", "📋 Ficha"])
+
+    with aba_av:
+        # CALCULADORA DE DADOS
+        with st.expander("🎲 Rolar Ação da Ficha (Calculadora de d10)", expanded=False):
+            cr1, cr2 = st.columns(2)
+            with cr1:
+                atr_e = st.selectbox("Atributo:", TODOS_ATRIBUTOS, index=0)
+            with cr2:
+                hab_e = st.selectbox("Habilidade:", TODAS_HABILIDADES, index=3)
+            
+            total_parada = max(1, p["atributos"][atr_e] + p["habilidades"].get(hab_e, 0))
+            if st.button(f"🎲 Rolar {atr_e} + {hab_e} ({total_parada} dados)"):
+                dados = [random.randint(1, 10) for _ in range(total_parada)]
+                dez = dados.count(10)
+                pares = dez // 2
+                sucessos = sum(1 for d in dados if 6 <= d <= 9) + (pares * 4) + (dez % 2)
+                
+                dados_jogo["dialogos"].append({
+                    "tipo": "rolagem",
+                    "teste": f"{atr_e} + {hab_e}",
+                    "dados": dados,
+                    "sucessos": sucessos,
+                    "critico": pares > 0
+                })
+                salvar_todos_saves(todos_saves)
+                st.rerun()
+
+        # NARRATIVA VISUAL NOVEL & OFF-GAME OOC
+        for d in dados_jogo["dialogos"]:
+            if d.get("tipo") == "rolagem":
+                crit_txt = "✨ **CRÍTICO!**" if d["critico"] else ""
                 st.markdown(f"""
-                    <div style="background-color: #161a22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin-bottom: 12px;">
-                        <div style="font-size: 1.8em;">{it['icone']}</div>
-                        <strong style="color: #c084fc; font-size: 1.1em;">{it['nome']}</strong><br>
-                        <small style="color: #eab308;">[{it['tipo']}]</small>
-                        <p style="color: #9ca3af; font-size: 0.85em; margin-top: 8px;">{it['detalhe']}</p>
+                    <div class="roll-card">
+                        🎲 <strong>{d['teste']}:</strong> {d['sucessos']} Sucesso(s) {crit_txt}<br>
+                        <small style="color: #94a3b8;">Faces: {d['dados']}</small>
+                    </div>
+                """, unsafe_allow_html=True)
+            elif d.get("tipo") == "ooc":
+                # Card de Mensagem Off-Game (OOC)
+                st.markdown(f"""
+                    <div class="ooc-box">
+                        <strong style="color: #c084fc;">💬 [OFF-GAME / OOC] Mestre responde:</strong><br>
+                        <span style="color: #e2e8f0; font-size: 0.98em;">{d['fala']}</span>
+                    </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                    <div class="vn-box">
+                        <div class="vn-name">🎭 {d['npc']}</div>
+                        <div class="vn-action">"{d['acao']}"</div>
+                        <div class="vn-dialogue">"{d['fala']}"</div>
+                        <div class="vn-prompt">👉 {d['pergunta']}</div>
                     </div>
                 """, unsafe_allow_html=True)
 
-    # 4. ABA CÓDEX
-    with aba_npcs:
-        st.subheader("👥 Códex de NPCs & Relações (-100 a +100)")
-        for nome, dados in st.session_state.npcs.items():
-            val = dados['afeto']
-            cor_barra = "#a855f7" if val >= 0 else "#ef4444"
-            st.markdown(f"""
-                <div style="background-color: #131722; border: 1px solid #2d3748; border-radius: 10px; padding: 15px; margin-bottom: 15px;">
-                    <h4 style="margin: 0; color: #f3e8ff;">{nome} <span style="font-size: 0.7em; color: #9ca3af;">({dados['titulo']})</span></h4>
-                    <p style="font-size: 0.9em; color: #cbd5e1; margin: 5px 0;"><strong>Personalidade:</strong> {dados['personalidade']}</p>
-                    <span style="font-size: 0.85em; font-weight: bold;">Relação: {val} / 100</span>
-                    <div style="background-color: #1f2937; height: 10px; border-radius: 5px; width: 100%; margin: 6px 0;">
-                        <div style="background-color: {cor_barra}; height: 100%; border-radius: 5px; width: {abs(val)}%;"></div>
-                    </div>
-                    <p style="font-size: 0.85em; color: #eab308; margin-top: 5px;"><strong>Segredos:</strong> {dados['segredos'][0]}</p>
-                </div>
-            """, unsafe_allow_html=True)
+        comando = st.chat_input("O que você faz ou diz agora? (Dica: use 'ooc:' para falar em off com o Mestre)...")
+        if comando:
+            with st.spinner("O Mestre está consultando as regras e respondendo..."):
+                resposta = narrar_acao_venice(comando, p, dados_jogo["dialogos"][-3:])
+                dados_jogo["dialogos"].append(resposta)
+                salvar_todos_saves(todos_saves)
+                st.rerun()
 
-    # 5. ABA DIÁRIO DE QUESTS
-    with aba_diario:
-        st.subheader("📖 Quests & Pistas em Andamento")
-        st.markdown(f"""
-        * 🔴 **[Principal] A Sombra sob {p['bairro']}**
-          * *Objetivo:* Investigar a movimentação de caçadores com armas de prata e rituais profanos na região.
-        """)
+    with aba_inv:
+        st.subheader("🎒 Inventário")
+        for it in dados_jogo["inventario"]:
+            st.markdown(f"**{it['icone']} {it['nome']}** — *{it['tipo']}*\n\n{it['detalhe']}")
+
+    with aba_cod:
+        st.subheader("👥 Códex de NPCs")
+        for nome, dados_npc in dados_jogo["npcs"].items():
+            val = dados_npc['afeto']
+            st.markdown(f"**{nome}** ({dados_npc['titulo']}) — Afeição: **{val}/100**")
+            st.progress((val + 100) / 200.0)
+
+    with aba_fic:
+        st.subheader(f"Ficha de {p['nome']}")
+        st.write(p["historia"])
+        st.write(f"**Convicções:** {p['conviccoes']}")
